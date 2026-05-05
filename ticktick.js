@@ -20,7 +20,7 @@ hostname = ticktick.com
 var body = $response.body;
 var obj = JSON.parse(body);
 
-obj.proEndDate = "2099-01-01T00:00:00.000+0000";
+obj.proEndDate = "9999-05-20T00:00:00.000+0000";
 obj.needSubscribe = false;
 obj.pro = true;
 
