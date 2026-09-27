@@ -9,7 +9,7 @@
 3. 成功后，在本次运行的 **Artifacts** 下载 `TickTickPatch-debug-运行编号`，解压得到可直接安装的 `app-debug.apk`。无须配置 Secrets。
 4. 安装 APK，在支持 **libxposed API 102** 的框架管理器中启用模块，勾选 TickTick / 滴答清单，强制停止并重新打开目标应用。模块没有桌面入口和设置界面。
 
-CI 自动准备 JDK 17、Gradle 9.3.1、AGP 9.1.1、Android SDK 37 / Build Tools 36.0.0，执行单元测试、Android Lint、APK 编译、Xposed 元数据检查及签名验证。**不需要在你的电脑上安装开发环境。** Gradle 由 Actions 固定版本供应，本项目没有 Gradle Wrapper。
+CI 自动准备 JDK 17、Gradle 9.3.1、AGP 9.1.1、Android SDK Platform 37.0 / Build Tools 36.0.0，执行单元测试、Android Lint、APK 编译、Xposed 元数据检查及签名验证。**不需要在你的电脑上安装开发环境。** Gradle 由 Actions 固定版本供应，本项目没有 Gradle Wrapper。
 
 libxposed 102.0.0 发布的 AAR 元数据要求 `minCompileSdk=37`，因此不能直接用 SDK 35/36 编译。[AGP 9.1.1 官方兼容表](https://developer.android.com/build/releases/agp-9-1-0-release-notes)要求 Gradle 9.3.1、JDK 17，并支持 API 37。模块自身最低安装版本为 Android 8.0（API 26）；还需满足所用框架和宿主应用的版本要求。
 
