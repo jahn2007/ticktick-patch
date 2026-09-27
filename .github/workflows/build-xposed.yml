@@ -1,0 +1,122 @@
+name: Build Xposed APK
+
+on:
+  push:
+    paths:
+      - 'xposed/**'
+      - '.github/workflows/build-xposed.yml'
+  pull_request:
+    paths:
+      - 'xposed/**'
+      - '.github/workflows/build-xposed.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xposed-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: xposed
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build dependencies
+        run: sdkmanager 'platforms;android-37' 'build-tools;36.0.0'
+
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Test, lint and build debug APK
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+
+      - name: Verify module packaging and debug signature
+        run: |
+          python3 scripts/verify_apk.py app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TickTickPatch-debug-${{ github.run_number }}
+          path: xposed/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # A personal signing key is optional. Forks and PRs still build debug APKs without secrets.
+      - name: Prepare optional release signing
+        id: signing
+        if: github.event_name != 'pull_request'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [[ -z "$KEYSTORE_BASE64$STORE_PASSWORD$KEY_ALIAS$KEY_PASSWORD" ]]; then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo 'No release signing secrets configured; the debug APK is ready to install.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ -z "$KEYSTORE_BASE64" || -z "$STORE_PASSWORD" || -z "$KEY_ALIAS" || -z "$KEY_PASSWORD" ]]; then
+            echo '::error::Configure all four signing secrets, or leave all four unset.'
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/ticktickpatch-release.jks"
+          echo 'enabled=true' >> "$GITHUB_OUTPUT"
+
+      - name: Build and verify signed release APK
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          SIGNING_STORE_FILE: ${{ runner.temp }}/ticktickpatch-release.jks
+          SIGNING_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          gradle --no-daemon --stacktrace :app:lintRelease :app:assembleRelease
+          python3 scripts/verify_apk.py app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+
+      - name: Upload signed release APK
+        if: steps.signing.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: TickTickPatch-release-${{ github.run_number }}
+          path: xposed/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TickTickPatch-reports-${{ github.run_number }}
+          path: |
+            xposed/app/build/reports/
+            xposed/app/build/test-results/
+          if-no-files-found: ignore
+
+      - name: Remove temporary signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/ticktickpatch-release.jks"
