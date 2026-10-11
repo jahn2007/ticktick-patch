@@ -3,11 +3,8 @@ plugins {
 }
 
 def releaseStore = providers.environmentVariable('SIGNING_STORE_FILE').orNull
-def patchProfile = providers.gradleProperty('patchProfile').getOrElse('full')
-if (!(patchProfile in ['none', 'pass-through', 'pro', 'pro-network', 'pro-local', 'pro-reminder-safe',
-        'pro-reminder-gate', 'apk-sample',
-        'pro-n1', 'pro-n2', 'pro-n3', 'pro-n4', 'pro-l1', 'pro-l2', 'pro-l3', 'pro-l4',
-        'no-team', 'full'])) {
+def patchProfile = providers.gradleProperty('patchProfile').getOrElse('merged-no-team')
+if (!(patchProfile in ['pro-reminder-gate', 'apk-sample', 'merged-no-team'])) {
     throw new GradleException("Unknown patchProfile: ${patchProfile}")
 }
 
@@ -22,7 +19,7 @@ android {
         minSdk 26
         targetSdk 35
         versionCode 2
-        versionName (patchProfile == 'full' ? '1.0.1' : "1.0.1-${patchProfile}")
+        versionName "1.0.1-${patchProfile}"
         buildConfigField 'String', 'PATCH_PROFILE', '"' + patchProfile + '"'
     }
 

@@ -2,7 +2,6 @@ package io.github.ticktickpatch;
 
 import android.util.Log;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Collections;
@@ -26,8 +25,6 @@ public final class TickTickModule extends XposedModule {
     public synchronized void onPackageReady(PackageReadyParam param) {
         String name = param.getPackageName();
         if (!name.equals("com.ticktick.task") && !name.equals("cn.ticktick.task")) return;
-        // The baseline must not load host models or register even an observer hook.
-        if (!profile.installsHooks()) return;
         if (!installed.add(param.getClassLoader())) return;
         new Installer(param.getClassLoader()).install();
     }
@@ -38,7 +35,7 @@ public final class TickTickModule extends XposedModule {
         Installer(ClassLoader loader) { this.loader = loader; }
 
         void install() {
-            if (profile.includesReminderGate()) reminderGate();
+            reminderGate();
             if (profile.usesSamplePatch()) {
                 for (SamplePatch.Target target : SamplePatch.TARGETS) {
                     values(find(target.owner), target.kind, target.method);
@@ -46,13 +43,13 @@ public final class TickTickModule extends XposedModule {
                 return;
             }
             Class<?> entity = find("com.ticktick.task.network.sync.entity.SignUserInfo");
-            values(entity, TRUE, "getIsProN", "getActiveTeamUserN", "getTeamUserN", "getTeamPro");
+            values(entity, TRUE, "getIsProN");
             values(entity, FALSE, "getIsInGracePeriodN", "getNeedSubscribe");
             values(entity, NULL, "getNoGraceDate");
             values(entity, END_DATE, "getProEndDate");
 
             Class<?> legacy = find("com.ticktick.task.network.sync.common.model.SignUserInfo");
-            values(legacy, TRUE, "isPro", "isActiveTeamUser", "isTeamPro", "isTeamUser");
+            values(legacy, TRUE, "isPro");
             values(legacy, FALSE, "getNeedSubscribe", "getGracePeriod");
             values(legacy, END_DATE, "getProEndDate");
 
@@ -67,7 +64,7 @@ public final class TickTickModule extends XposedModule {
             values(subscription, END_DATE, "getProEndDate");
 
             Class<?> user = find("com.ticktick.task.data.User");
-            values(user, TRUE, "isPro", "isActiveTeamUser", "isTeamUser", "getTeamPro");
+            values(user, TRUE, "isPro");
             values(user, FALSE, "isNeedSubscribe", "getNeedSubscribe", "getGracePeriod", "isDuplicateSubscribeError");
             values(user, PRO_TYPE, "getProType", "getProTypeForFake");
             values(user, END_TIME, "getProEndTime");
@@ -78,21 +75,16 @@ public final class TickTickModule extends XposedModule {
             limits(find("com.ticktick.task.helper.LimitHelper"));
 
             Class<?> js = find("com.ticktick.task.javascript.CommonJavascriptObject$UserProfile");
-            values(js, TRUE, "getPro", "getActiveTeamUser", "getTeamPro");
+            values(js, TRUE, "getPro");
             values(js, FALSE, "getNeedSubscribe", "getGracePeriod");
-            values(js, END_DATE, "getProEndDate", "getTeamProEndDate");
+            values(js, END_DATE, "getProEndDate");
 
             Class<?> dbUser = find("com.ticktick.task.sync.db.User");
             values(dbUser, PRO_TYPE, "getPRO_TYPE");
             values(dbUser, END_TIME, "getPRO_END_TIME");
             values(dbUser, FALSE, "getNEED_SUBSCRIBE", "getGRACE_PERIOD");
-            values(dbUser, TRUE, "getACTIVE_TEAM_USER", "getTEAM_PRO", "getTEAM_USER");
 
-            if (BuildConfig.DEBUG && profile.includesLegacyDiagnostics()) {
-                observeDatabase(find("com.ticktick.task.sync.db.Database"));
-                audit(entity);
-                audit(user);
-            }
+
         }
 
         Class<?> find(String name) {
@@ -111,24 +103,14 @@ public final class TickTickModule extends XposedModule {
                 try {
                     // Only zero-argument getters are targeted, never arbitrary overloads.
                     Method method = noArgs(type, name);
-                    ReturnValues.Factory factory = ReturnValues.forType(kind, method.getReturnType());
+                    ReturnValues.Kind replacementKind = profile.replacementKind(type.getName(), name, kind);
+                    ReturnValues.Factory factory = ReturnValues.forType(replacementKind, method.getReturnType());
                     // Reject unsupported date constructors before touching the host method.
-                    if (profile.changesResults()) factory.create();
+                    factory.create();
                     AtomicBoolean warned = new AtomicBoolean();
                     CallTrace trace = new CallTrace(method);
                     hook(method).setId("ticktickpatch.value").intercept(chain -> {
-                        // Check before proceeding so nested getters see the same reminder stack.
-                        boolean preserveReminder = profile.preservesReminderCalls()
-                                && ReminderCallPolicy.isReminder(Thread.currentThread().getStackTrace());
                         Object original = trace.proceed(chain);
-                        if (preserveReminder) {
-                            trace.reminderOriginal(original);
-                            return original;
-                        }
-                        if (!profile.changesResults()) {
-                            trace.result(original, original);
-                            return original;
-                        }
                         try {
                             Object replacement = factory.create();
                             trace.result(original, replacement);
@@ -160,10 +142,6 @@ public final class TickTickModule extends XposedModule {
                 CallTrace trace = new CallTrace(free);
                 hook(free).setId("ticktickpatch.limits").intercept(chain -> {
                     Object original = trace.proceed(chain);
-                    if (!profile.changesResults()) {
-                        trace.result(original, original);
-                        return original;
-                    }
                     try {
                         Object replacement = pro.invoke(chain.getThisObject());
                         Object result = replacement != null ? replacement : original;
@@ -203,42 +181,6 @@ public final class TickTickModule extends XposedModule {
             log(Log.WARN, TAG, "[reminder-gate-unavailable] No verified handler shape; reminder fix not installed");
         }
 
-        void observeDatabase(Class<?> type) {
-            if (type == null) return;
-            try {
-                for (Method method : type.getDeclaredMethods()) {
-                    if (!method.getName().equals("updateUser") || method.getParameterCount() == 0) continue;
-                    AtomicBoolean printed = new AtomicBoolean();
-                    hook(method).setId("ticktickpatch.observe").intercept(chain -> {
-                        if (printed.compareAndSet(false, true)) {
-                            Object data = chain.getArg(0);
-                            if (data != null) {
-                                StringBuilder message = new StringBuilder("[SERVER->APP]");
-                                for (String field : new String[]{"pro", "activeTeamUser", "teamUser",
-                                        "needSubscribe", "gracePeriod", "proEndDate"}) {
-                                    message.append(' ').append(field).append('=').append(readField(data, field));
-                                }
-                                log(Log.DEBUG, TAG, message.toString());
-                            }
-                        }
-                        return chain.proceed();
-                    });
-                }
-            } catch (RuntimeException | LinkageError e) { skip("Database observer", e); }
-        }
-
-        void audit(Class<?> type) {
-            if (type == null) return;
-            try {
-                for (Method method : type.getDeclaredMethods()) {
-                    if (method.getParameterCount() == 0
-                            && method.getName().matches("(?i).*(pro|team|subscrib|grace|vip|pay).*")) {
-                        log(Log.DEBUG, TAG, "[audit] " + method);
-                    }
-                }
-            } catch (RuntimeException | LinkageError e) { log(Log.DEBUG, TAG, "Audit unavailable", e); }
-        }
-
         void skip(String name, Throwable error) {
             log(Log.WARN, TAG, "Skipped " + name + ": " + error);
         }
@@ -249,7 +191,6 @@ public final class TickTickModule extends XposedModule {
         private final Method method;
         private final AtomicBoolean printedCall = new AtomicBoolean();
         private final AtomicBoolean printedError = new AtomicBoolean();
-        private final AtomicBoolean printedReminder = new AtomicBoolean();
 
         CallTrace(Method method) { this.method = method; }
 
@@ -257,7 +198,7 @@ public final class TickTickModule extends XposedModule {
             try {
                 return chain.proceed();
             } catch (Throwable error) {
-                if (profile.tracesCalls() && printedError.compareAndSet(false, true)) {
+                if (printedError.compareAndSet(false, true)) {
                     log(Log.ERROR, TAG, "[host-error] profile=" + BuildConfig.PATCH_PROFILE
                             + " method=" + method, error);
                 }
@@ -267,18 +208,13 @@ public final class TickTickModule extends XposedModule {
         }
 
         void result(Object original, Object replacement) {
-            if (!profile.tracesCalls() || !printedCall.compareAndSet(false, true)) return;
+            if (!printedCall.compareAndSet(false, true)) return;
             log(Log.INFO, TAG, "[hook-call] profile=" + BuildConfig.PATCH_PROFILE
                     + " method=" + method + " original=" + describe(original)
                     + " replacement=" + describe(replacement), new Throwable("First call path"));
         }
 
-        void reminderOriginal(Object original) {
-            if (!printedReminder.compareAndSet(false, true)) return;
-            log(Log.INFO, TAG, "[reminder-original] profile=" + BuildConfig.PATCH_PROFILE
-                    + " method=" + method + " original=" + describe(original),
-                    new Throwable("Preserved reminder call path"));
-        }
+
     }
 
     private static String describe(Object value) {
@@ -304,16 +240,4 @@ public final class TickTickModule extends XposedModule {
         throw new NoSuchMethodException(type.getName() + "." + name + "()");
     }
 
-    private static String readField(Object object, String name) {
-        for (Class<?> current = object.getClass(); current != null; current = current.getSuperclass()) {
-            try {
-                Field field = current.getDeclaredField(name);
-                field.setAccessible(true);
-                return String.valueOf(field.get(object));
-            } catch (NoSuchFieldException ignored) {
-                // Continue into the superclass.
-            } catch (IllegalAccessException | RuntimeException | LinkageError e) { return "<unavailable>"; }
-        }
-        return "<absent>";
-    }
 }

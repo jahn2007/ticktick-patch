@@ -9,9 +9,7 @@ public class SamplePatchTest {
     public void samplePreservesComputedAndStoredGettersInsteadOfApplyingScriptExtras() {
         HookProfile profile = new HookProfile("apk-sample");
         assertTrue(profile.usesSamplePatch());
-        assertTrue(profile.includesReminderGate());
         assertFalse(profile.includesLimits());
-        assertFalse(profile.includesLegacyDiagnostics());
         assertTrue(profile.includesValue("com.ticktick.task.data.User", "getProTypeForFake"));
         assertFalse(profile.includesValue("com.ticktick.task.data.User", "isPro"));
         assertFalse(profile.includesValue("com.ticktick.task.data.User", "getProEndDate"));
@@ -36,15 +34,4 @@ public class SamplePatchTest {
         assertEquals(10611728865536L, endTime);
     }
 
-    @Test
-    public void proGateControlAddsGateWithoutChangingOriginalProSubset() {
-        HookProfile pro = new HookProfile("pro");
-        HookProfile guarded = new HookProfile("pro-reminder-gate");
-        assertTrue(guarded.includesReminderGate());
-        assertFalse(pro.includesReminderGate());
-        assertFalse(guarded.preservesReminderCalls());
-        for (String method : new String[]{"isPro", "getIsProN", "getIsPro", "getPro", "getProType", "getProEndDate"}) {
-            assertEquals(pro.includesValue(method), guarded.includesValue(method));
-        }
-    }
 }

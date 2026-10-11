@@ -40,7 +40,7 @@ libxposed 102.0.0 发布的 AAR 元数据要求 `minCompileSdk=37`，因此不�
 
 使用 API 102 的 `hook(method).setId(...).intercept(...)`，在 `chain.proceed()` 成功返回后修改结果，保留原方法副作用和异常。只匹配无参 getter；缺类、缺方法、抽象方法、返回类型不符分别跳过并记录日志，不阻止其余 Hook。日期构造或专业额度读取失败时保留原结果。
 
-Debug 版本保留会员方法清单审计，以及每个 `Database.updateUser` 重载首次调用的状态字段日志。Release 关闭这两类调试日志。未迁移依赖 Application 的延迟账户探针和 Toast；状态与额度 Hook 已迁移。未启用热重载，更新模块后需要重启目标应用进程。
+旧 full 专用的会员方法清单审计和 `Database.updateUser` 观察代码已删除。现有非 none 配置保留每个 Hook 首次调用及错误日志；没有依赖 Application 的延迟账户探针和 Toast。未启用热重载，更新模块后需要重启目标应用进程。
 
 ## 验证与排查
 
@@ -50,10 +50,12 @@ Debug 版本保留会员方法清单审计，以及每个 `Database.updateUser` 
 
 应用图标使用 `app/src/main/res/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher.png`，尺寸依次为 48、72、96、144、192 像素，由提供的 `asset/icon.png` 等比缩小并迁移而来；Manifest 通过 `android:icon="@mipmap/ic_launcher"` 引用。无需把图标放入 Xposed 的 `META-INF/xposed` 注册目录。
 
-参考脚本标注针对 TickTick 8.2.2.0；本模块尚未在真机上验证。CI 成功代表测试、静态检查、编译和签名验证通过，不代表宿主运行时 Hook 已验证。模块修改客户端方法返回值，服务器端权限及接口限制仍由服务端决定。
+参考脚本标注针对 TickTick 8.2.2.0。用户已在 Android 15 / TickTick Play 8.2.2.0 / LSPosed API 102 上确认 `pro-reminder-gate`、`apk-sample` 正常提醒，并通过 `pro → pro-reminder-gate → pro` 对照验证提醒检查 Hook 的作用；这不代表所有配置均已验证。CI 成功代表测试、静态检查、编译和签名验证通过，不代表宿主运行时 Hook 已验证。模块修改客户端方法返回值，服务器端权限及接口限制仍由服务端决定。
 
 接口依据：[libxposed API 102.0.0](https://central.sonatype.com/artifact/io.github.libxposed/api/102.0.0)、[现代 Xposed 模块入口说明](https://github.com/LSPosed/LSPosed/wiki/Develop-Xposed-Modules-Using-Modern-Xposed-API)。实现以 Maven 发布的 102.0.0 源码签名为准。
 
 ## APK 样例核对
 
-正常工作的 8001 修改版与生成脚本并非等价，已直接检查其会员 getter 和提醒处理器。证据与新增 `pro-reminder-gate`、`apk-sample` 候选的边界见 [APK 样例分析](APK_SAMPLE_ANALYSIS.md)。默认 `full` 仍是旧脚本配置；候选需另选诊断包进行真机验证。
+正常工作的 8001 修改版与生成脚本并非等价，已直接检查其会员 getter 和提醒处理器。证据与 `pro-reminder-gate`、`apk-sample` 的边界见 [APK 样例分析](APK_SAMPLE_ANALYSIS.md)。已删除用户确认提醒异常的 `full`、`pro`、`pro-network`、`pro-local` 配置及构建声明；历史分析中的这些名称仅用于记录旧结果。
+
+默认构建现为 `merged-no-team`，保留旧 `full` 的非团队 Hook 与到期时间，加入已验证的提醒检查，将 `User.getProTypeForFake()` 改为样例的 `0`。此组合尚待编译和真机测试，具体对照见 [合并版差异](MERGED_PROFILE.md)。构建集合仅保留 3 个配置：`merged-no-team`、已验证正常的 `apk-sample` 和 `pro-reminder-gate`。基线、分组和单方法诊断配置及其专用代码已删除。
