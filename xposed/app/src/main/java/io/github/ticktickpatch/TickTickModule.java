@@ -10,14 +10,12 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.github.libxposed.api.XposedModule;
-import io.github.libxposed.api.XposedInterface;
 
 import static io.github.ticktickpatch.ReturnValues.Kind.*;
 
 /** API 102 entry point. The framework supplies the host loader before Application creation. */
 public final class TickTickModule extends XposedModule {
     private static final String TAG = "TickTickPatch";
-    private final HookProfile profile = new HookProfile(BuildConfig.PATCH_PROFILE);
     private final Set<ClassLoader> installed =
             Collections.newSetFromMap(new IdentityHashMap<>());
 
@@ -36,12 +34,6 @@ public final class TickTickModule extends XposedModule {
 
         void install() {
             reminderGate();
-            if (profile.usesSamplePatch()) {
-                for (SamplePatch.Target target : SamplePatch.TARGETS) {
-                    values(find(target.owner), target.kind, target.method);
-                }
-                return;
-            }
             Class<?> entity = find("com.ticktick.task.network.sync.entity.SignUserInfo");
             values(entity, TRUE, "getIsProN");
             values(entity, FALSE, "getIsInGracePeriodN", "getNeedSubscribe");
@@ -66,7 +58,8 @@ public final class TickTickModule extends XposedModule {
             Class<?> user = find("com.ticktick.task.data.User");
             values(user, TRUE, "isPro");
             values(user, FALSE, "isNeedSubscribe", "getNeedSubscribe", "getGracePeriod", "isDuplicateSubscribeError");
-            values(user, PRO_TYPE, "getProType", "getProTypeForFake");
+            values(user, PRO_TYPE, "getProType");
+            values(user, ZERO, "getProTypeForFake");
             values(user, END_TIME, "getProEndTime");
             values(user, NULL, "getNoGraceDate");
 
@@ -84,7 +77,6 @@ public final class TickTickModule extends XposedModule {
             values(dbUser, END_TIME, "getPRO_END_TIME");
             values(dbUser, FALSE, "getNEED_SUBSCRIBE", "getGRACE_PERIOD");
 
-
         }
 
         Class<?> find(String name) {
@@ -99,21 +91,17 @@ public final class TickTickModule extends XposedModule {
         void values(Class<?> type, ReturnValues.Kind kind, String... names) {
             if (type == null) return;
             for (String name : names) {
-                if (!profile.includesValue(type.getName(), name)) continue;
                 try {
                     // Only zero-argument getters are targeted, never arbitrary overloads.
                     Method method = noArgs(type, name);
-                    ReturnValues.Kind replacementKind = profile.replacementKind(type.getName(), name, kind);
-                    ReturnValues.Factory factory = ReturnValues.forType(replacementKind, method.getReturnType());
+                    ReturnValues.Factory factory = ReturnValues.forType(kind, method.getReturnType());
                     // Reject unsupported date constructors before touching the host method.
                     factory.create();
                     AtomicBoolean warned = new AtomicBoolean();
-                    CallTrace trace = new CallTrace(method);
                     hook(method).setId("ticktickpatch.value").intercept(chain -> {
-                        Object original = trace.proceed(chain);
+                        Object original = chain.proceed();
                         try {
                             Object replacement = factory.create();
-                            trace.result(original, replacement);
                             return replacement;
                         } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
                             if (warned.compareAndSet(false, true)) {
@@ -129,7 +117,7 @@ public final class TickTickModule extends XposedModule {
         }
 
         void limits(Class<?> type) {
-            if (type == null || !profile.includesLimits()) return;
+            if (type == null) return;
             try {
                 Method free = noArgs(type, "getLimitsFree");
                 Method pro = noArgs(type, "getLimitsPro");
@@ -139,13 +127,11 @@ public final class TickTickModule extends XposedModule {
                     throw new IllegalArgumentException("Incompatible limit getters");
                 }
                 AtomicBoolean warned = new AtomicBoolean();
-                CallTrace trace = new CallTrace(free);
                 hook(free).setId("ticktickpatch.limits").intercept(chain -> {
-                    Object original = trace.proceed(chain);
+                    Object original = chain.proceed();
                     try {
                         Object replacement = pro.invoke(chain.getThisObject());
                         Object result = replacement != null ? replacement : original;
-                        trace.result(original, result);
                         return result;
                     } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
                         if (warned.compareAndSet(false, true)) log(Log.WARN, TAG, "Limits fallback", e);
@@ -165,12 +151,10 @@ public final class TickTickModule extends XposedModule {
                 if (type == null) continue;
                 try {
                     Method method = ReminderGate.resolve(type);
-                    CallTrace trace = new CallTrace(method);
                     hook(method).setId("ticktickpatch.reminder-gate").intercept(chain -> {
-                        Object original = trace.proceed(chain);
+                        chain.proceed();
                         // In the sample, getProType() is always 1, so the early probe
                         // always reaches its patched false-return block, even in local mode.
-                        trace.result(original, false);
                         return false;
                     });
                     return;
@@ -184,48 +168,6 @@ public final class TickTickModule extends XposedModule {
         void skip(String name, Throwable error) {
             log(Log.WARN, TAG, "Skipped " + name + ": " + error);
         }
-    }
-
-    /** Diagnostic logs are emitted on calls/errors, never as injection-complete messages. */
-    private final class CallTrace {
-        private final Method method;
-        private final AtomicBoolean printedCall = new AtomicBoolean();
-        private final AtomicBoolean printedError = new AtomicBoolean();
-
-        CallTrace(Method method) { this.method = method; }
-
-        Object proceed(XposedInterface.Chain chain) throws Throwable {
-            try {
-                return chain.proceed();
-            } catch (Throwable error) {
-                if (printedError.compareAndSet(false, true)) {
-                    log(Log.ERROR, TAG, "[host-error] profile=" + BuildConfig.PATCH_PROFILE
-                            + " method=" + method, error);
-                }
-                // Keep the original exception and call count unchanged.
-                throw error;
-            }
-        }
-
-        void result(Object original, Object replacement) {
-            if (!printedCall.compareAndSet(false, true)) return;
-            log(Log.INFO, TAG, "[hook-call] profile=" + BuildConfig.PATCH_PROFILE
-                    + " method=" + method + " original=" + describe(original)
-                    + " replacement=" + describe(replacement), new Throwable("First call path"));
-        }
-
-
-    }
-
-    private static String describe(Object value) {
-        if (value == null) return "null";
-        if (value instanceof Boolean || value instanceof Number) return value.toString();
-        if (value instanceof String) {
-            String string = (String) value;
-            return string.length() > 64 ? string.substring(0, 64) + "..." : string;
-        }
-        // Avoid host-defined toString implementations during reminder diagnostics.
-        return value.getClass().getName();
     }
 
     private static Method noArgs(Class<?> type, String name) throws NoSuchMethodException {

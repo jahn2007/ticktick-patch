@@ -1,61 +1,36 @@
-# TickTick Patch · libxposed API 102
+# TickTick Patch 1.1
 
-按仓库根目录的 `lspilot_main.java` 移植的纯 Java Xposed 模块。使用已发布的 `io.github.libxposed:api:102.0.0`（`compileOnly`），不打包框架 API，也不依赖旧版 XposedBridge 或 LSPilot。
+使用 libxposed API 102 的纯 Java 模块。正式版固定采用用户已验证正常的最终合并方案，不再提供多版本选择或诊断 APK 集合。应用包名 `io.github.ticktickpatch`，版本名 `1.1`，版本代码 `3`。
 
-## 在 GitHub 上直接生成 APK
+## 正式版行为
 
-1. 将**整个仓库**上传到 GitHub，保留根目录 `.github/workflows/build-xposed.yml` 和 `xposed/` 的相对位置。工作流不能只放在 `xposed/.github/` 中。
-2. 在仓库 **Actions → Build Xposed APK → Run workflow** 手动运行；修改模块或工作流后的 push、pull request 也会自动触发。手动运行按钮需要工作流已存在于默认分支。
-3. 成功后，在本次运行的 **Artifacts** 下载 `TickTickPatch-debug-运行编号`，解压得到可直接安装的 `app-debug.apk`。无须配置 Secrets。
-4. 安装 APK，在支持 **libxposed API 102** 的框架管理器中启用模块，勾选 TickTick / 滴答清单，强制停止并重新打开目标应用。模块没有桌面入口和设置界面。
+- 34 个非团队返回值 Hook，不修改团队身份、团队会员或团队日期。
+- `User.getProType()` 为 `1`，`User.getProTypeForFake()` 为 `0`。
+- 用户和数据库模型的到期时间均为 `253382774400000L`；其他非团队日期沿用远期日期。
+- 免费额度读取会员额度对象。
+- 校验提醒处理器 `jd.d` / `qc.e` 的方法形状后，令第一个匹配的 `h()` 返回 `false`。
 
-CI 自动准备 JDK 17、Gradle 9.3.1、AGP 9.1.1、Android SDK Platform 37.0 / Build Tools 36.0.0，执行单元测试、Android Lint、APK 编译、Xposed 元数据检查及签名验证。**不需要在你的电脑上安装开发环境。** Gradle 由 Actions 固定版本供应，本项目没有 Gradle Wrapper。
+Hook 行为与最终 `merged-no-team` 测试版相同，用户已在 Android 15、TickTick Play 8.2.2.0（8220）、LSPosed 2.2.1（7912）/ API 102 上确认正常工作。宿主升级后需重新验证。
 
-libxposed 102.0.0 发布的 AAR 元数据要求 `minCompileSdk=37`，因此不能直接用 SDK 35/36 编译。[AGP 9.1.1 官方兼容表](https://developer.android.com/build/releases/agp-9-1-0-release-notes)要求 Gradle 9.3.1、JDK 17，并支持 API 37。模块自身最低安装版本为 Android 8.0（API 26）；还需满足所用框架和宿主应用的版本要求。
+原方法成功返回后才替换结果，保留原副作用和异常；日期或额度构造失败时保留原结果。缺类、缺方法或类型不匹配会跳过并记录日志。没有首次调用栈、数据库观察、方法审计或注入完成 Toast、通知、弹窗。模块无桌面入口。
 
-每次新的 GitHub Runner 可能生成不同的 debug 签名，覆盖安装出现签名不一致时，需要先卸载旧模块。需要长期更新请配置下面的固定 release 签名。
+## GitHub 构建与发布
 
-## 可选：生成固定签名的 Release APK
-
-在仓库 Settings → Secrets and variables → Actions 中配置以下四个 Repository secrets：
+工作流 `.github/workflows/build-xposed.yml` 在 xposed 分支修改、PR 和手动运行时执行 Release 单元测试、Lint 及打包检查。非 PR 构建必须配置四项 Repository Secrets：
 
 | Secret | 内容 |
 | --- | --- |
-| `KEYSTORE_BASE64` | 你持有的 JKS / PKCS12 签名文件的 Base64 内容 |
+| `KEYSTORE_BASE64` | 固定 JKS / PKCS12 签名文件的 Base64 |
 | `KEYSTORE_PASSWORD` | 密钥库密码 |
-| `KEY_ALIAS` | 签名密钥别名 |
-| `KEY_PASSWORD` | 签名密钥密码 |
+| `KEY_ALIAS` | 私钥别名 |
+| `KEY_PASSWORD` | 私钥密码 |
 
-四项全部配置后，push 或手动运行还会生成 `TickTickPatch-release-运行编号`，内含可安装的 `app-release.apk`。PR 只构建 debug，不使用签名 Secrets。四项都不配置时跳过 release；仅配置部分时工作流明确报错，debug 产物仍已上传。私钥仅临时写入 Runner，结束时删除，不随产物上传。工作流不会自动创建 GitHub Release。
+普通构建上传 `TickTickPatch-release-1.1`，内含 `TickTickPatch-1.1.apk`。推送 v1.1 标签后，测试、模块元数据与签名检查全部通过才自动创建 GitHub Release 并附上 APK。PR 不使用 Secrets、不发布产物，只检查未签名 Release 的打包。
 
-## Hook 覆盖与兼容处理
+CI 使用 JDK 17、Gradle 9.3.1、Android SDK 37.0、Build Tools 36.0.0，无需安装本地环境。私钥只临时存在 Runner 上，结束时删除，不随产物上传。
 
-- 响应模型：新旧 `SignUserInfo`、`User7ProModel`、`SubscriptionInfo`。
-- 用户状态：`data.User`、`sync.db.User`、`ProHelper`、内核 `AccountManager`。
-- 额度：`LimitHelper.getLimitsFree()` 在原调用完成后读取 `getLimitsPro()`。
-- JS 桥：`CommonJavascriptObject$UserProfile`。
-- 到期时间沿用脚本的 `253382774400000` / `9999-05-20T00:00:00.000+0000`。自动匹配 `Date`、`String` 或带单参数 `long` 构造器的日期类，每次调用生成新的可变日期对象。
+安装后在 API 102 框架中启用模块，勾选 TickTick / 滴答清单并重启宿主进程。旧 Debug 签名不同时，先卸载旧模块再安装，保留 TickTick 及其数据。
 
-通过 `onPackageReady()` 取得宿主 ClassLoader，并在创建 Application 前安装 Hook，无须反射 `ActivityThread.currentApplication()`。包名限定为 `com.ticktick.task` / `cn.ticktick.task`；类名沿用参考脚本的 `com.ticktick.*`，并不意味着已验证所有国内版。每个进程各自安装，同一 ClassLoader 不重复安装。
+作用域为 `com.ticktick.task` / `cn.ticktick.task`，目标类沿用 `com.ticktick.*`；已验证的是上述 Play 版本。服务器权限仍由服务端控制。
 
-使用 API 102 的 `hook(method).setId(...).intercept(...)`，在 `chain.proceed()` 成功返回后修改结果，保留原方法副作用和异常。只匹配无参 getter；缺类、缺方法、抽象方法、返回类型不符分别跳过并记录日志，不阻止其余 Hook。日期构造或专业额度读取失败时保留原结果。
-
-旧 full 专用的会员方法清单审计和 `Database.updateUser` 观察代码已删除。现有非 none 配置保留每个 Hook 首次调用及错误日志；没有依赖 Application 的延迟账户探针和 Toast。未启用热重载，更新模块后需要重启目标应用进程。
-
-## 验证与排查
-
-若启用模块后提醒失效，使用同一轮 CI 的 `TickTickPatch-reminder-diagnostics-运行编号` 进行分组对照，见 [提醒失效排查](REMINDER_DIAGNOSTICS.md)。
-
-模块不显示注入完成的 Toast、通知或弹窗，也不输出加载成功及安装完成的汇总消息；参考脚本末尾的完成提示已一并移除。故障与调试日志仍使用 `TickTickPatch` 标签。多个版本的候选模型不会全部同时存在，部分跳过属正常现象；功能未生效时应检查作用域、框架版本及宿主类名是否变化。
-
-应用图标使用 `app/src/main/res/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher.png`，尺寸依次为 48、72、96、144、192 像素，由提供的 `asset/icon.png` 等比缩小并迁移而来；Manifest 通过 `android:icon="@mipmap/ic_launcher"` 引用。无需把图标放入 Xposed 的 `META-INF/xposed` 注册目录。
-
-参考脚本标注针对 TickTick 8.2.2.0。用户已在 Android 15 / TickTick Play 8.2.2.0 / LSPosed API 102 上确认 `pro-reminder-gate`、`apk-sample` 正常提醒，并通过 `pro → pro-reminder-gate → pro` 对照验证提醒检查 Hook 的作用；这不代表所有配置均已验证。CI 成功代表测试、静态检查、编译和签名验证通过，不代表宿主运行时 Hook 已验证。模块修改客户端方法返回值，服务器端权限及接口限制仍由服务端决定。
-
-接口依据：[libxposed API 102.0.0](https://central.sonatype.com/artifact/io.github.libxposed/api/102.0.0)、[现代 Xposed 模块入口说明](https://github.com/LSPosed/LSPosed/wiki/Develop-Xposed-Modules-Using-Modern-Xposed-API)。实现以 Maven 发布的 102.0.0 源码签名为准。
-
-## APK 样例核对
-
-正常工作的 8001 修改版与生成脚本并非等价，已直接检查其会员 getter 和提醒处理器。证据与 `pro-reminder-gate`、`apk-sample` 的边界见 [APK 样例分析](APK_SAMPLE_ANALYSIS.md)。已删除用户确认提醒异常的 `full`、`pro`、`pro-network`、`pro-local` 配置及构建声明；历史分析中的这些名称仅用于记录旧结果。
-
-默认构建现为 `merged-no-team`，保留旧 `full` 的非团队 Hook 与到期时间，加入已验证的提醒检查，将 `User.getProTypeForFake()` 改为样例的 `0`。此组合尚待编译和真机测试，具体对照见 [合并版差异](MERGED_PROFILE.md)。构建集合仅保留 3 个配置：`merged-no-team`、已验证正常的 `apk-sample` 和 `pro-reminder-gate`。基线、分组和单方法诊断配置及其专用代码已删除。
+历史字节码证据见 [APK_SAMPLE_ANALYSIS.md](APK_SAMPLE_ANALYSIS.md)，正式版排查见 [REMINDER_DIAGNOSTICS.md](REMINDER_DIAGNOSTICS.md)。

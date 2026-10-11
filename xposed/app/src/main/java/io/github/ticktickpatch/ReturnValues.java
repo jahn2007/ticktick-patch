@@ -7,9 +7,8 @@ import java.util.Date;
 final class ReturnValues {
     static final long PRO_END_MS = 253382774400000L;
     static final String PRO_END_STR = "9999-05-20T00:00:00.000+0000";
-    static final long SAMPLE_END_MS = 10611728865536L;
 
-    enum Kind { TRUE, FALSE, PRO_TYPE, ZERO, END_TIME, SAMPLE_END_TIME, END_DATE, NULL }
+    enum Kind { TRUE, FALSE, PRO_TYPE, ZERO, END_TIME, END_DATE, NULL }
 
     interface Factory {
         Object create() throws ReflectiveOperationException;
@@ -28,9 +27,8 @@ final class ReturnValues {
                 if (type == int.class || type == Integer.class) return () -> kind == Kind.ZERO ? 0 : 1;
                 break;
             case END_TIME:
-            case SAMPLE_END_TIME:
                 if (type == long.class || type == Long.class) {
-                    return () -> kind == Kind.SAMPLE_END_TIME ? SAMPLE_END_MS : PRO_END_MS;
+                    return () -> PRO_END_MS;
                 }
                 break;
             case NULL:

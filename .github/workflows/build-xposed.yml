@@ -1,7 +1,9 @@
-name: Build Xposed APK
+name: Build Xposed Release
 
 on:
   push:
+    branches: ['xposed']
+    tags: ['v1.1']
     paths:
       - 'xposed/**'
       - '.github/workflows/build-xposed.yml'
@@ -21,7 +23,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: xposed
@@ -39,7 +41,6 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          # The action's default includes the retired SDK package "tools".
           packages: platform-tools
 
       - name: Install Android build dependencies
@@ -54,44 +55,10 @@ jobs:
           gradle-version: '9.3.1'
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
-      - name: Test, lint and build debug APK
-        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Test and lint release
+        run: gradle --no-daemon --stacktrace :app:testReleaseUnitTest :app:lintRelease
 
-      - name: Verify module packaging and debug signature
-        run: |
-          python3 scripts/verify_apk.py app/build/outputs/apk/debug/app-debug.apk
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
-
-      - name: Upload installable debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: TickTickPatch-debug-${{ github.run_number }}
-          path: xposed/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Build reminder diagnostic APKs with the same debug signing key
-        run: |
-          mkdir -p diagnostic-apks
-          cp app/build/outputs/apk/debug/app-debug.apk diagnostic-apks/TickTickPatch-merged-no-team.apk
-          for profile in pro-reminder-gate apk-sample; do
-            gradle --no-daemon --stacktrace -PpatchProfile="$profile" :app:assembleDebug
-            python3 scripts/verify_apk.py app/build/outputs/apk/debug/app-debug.apk
-            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify app/build/outputs/apk/debug/app-debug.apk
-            cp app/build/outputs/apk/debug/app-debug.apk "diagnostic-apks/TickTickPatch-$profile.apk"
-          done
-
-      - name: Upload reminder diagnostic APKs
-        uses: actions/upload-artifact@v4
-        with:
-          name: TickTickPatch-reminder-diagnostics-${{ github.run_number }}
-          path: xposed/diagnostic-apks/*.apk
-          if-no-files-found: error
-          retention-days: 30
-
-      # A personal signing key is optional. Forks and PRs still build debug APKs without secrets.
-      - name: Prepare optional release signing
-        id: signing
+      - name: Prepare release signing
         if: github.event_name != 'pull_request'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -99,36 +66,40 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [[ -z "$KEYSTORE_BASE64$STORE_PASSWORD$KEY_ALIAS$KEY_PASSWORD" ]]; then
-            echo 'enabled=false' >> "$GITHUB_OUTPUT"
-            echo 'No release signing secrets configured; the debug APK is ready to install.' >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
           if [[ -z "$KEYSTORE_BASE64" || -z "$STORE_PASSWORD" || -z "$KEY_ALIAS" || -z "$KEY_PASSWORD" ]]; then
-            echo '::error::Configure all four signing secrets, or leave all four unset.'
+            echo '::error::All four release signing secrets are required.'
             exit 1
           fi
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/ticktickpatch-release.jks"
-          echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/ticktickpatch-release.keystore"
+          test -s "$RUNNER_TEMP/ticktickpatch-release.keystore"
 
       - name: Build and verify signed release APK
-        if: steps.signing.outputs.enabled == 'true'
+        if: github.event_name != 'pull_request'
         env:
-          SIGNING_STORE_FILE: ${{ runner.temp }}/ticktickpatch-release.jks
+          SIGNING_STORE_FILE: ${{ runner.temp }}/ticktickpatch-release.keystore
           SIGNING_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          gradle --no-daemon --stacktrace :app:lintRelease :app:assembleRelease
+          gradle --no-daemon --stacktrace :app:assembleRelease
           python3 scripts/verify_apk.py app/build/outputs/apk/release/app-release.apk
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+          mkdir -p release-apk
+          cp app/build/outputs/apk/release/app-release.apk release-apk/TickTickPatch-1.1.apk
+
+      - name: Check unsigned PR packaging
+        if: github.event_name == 'pull_request'
+        run: |
+          gradle --no-daemon --stacktrace :app:assembleRelease
+          python3 scripts/verify_apk.py app/build/outputs/apk/release/app-release-unsigned.apk
 
       - name: Upload signed release APK
-        if: steps.signing.outputs.enabled == 'true'
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: TickTickPatch-release-${{ github.run_number }}
-          path: xposed/app/build/outputs/apk/release/app-release.apk
+          name: TickTickPatch-release-1.1
+          path: xposed/release-apk/TickTickPatch-1.1.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -144,4 +115,24 @@ jobs:
 
       - name: Remove temporary signing key
         if: always()
-        run: rm -f "$RUNNER_TEMP/ticktickpatch-release.jks"
+        run: rm -f "$RUNNER_TEMP/ticktickpatch-release.keystore"
+
+  publish:
+    needs: build
+    if: github.ref == 'refs/tags/v1.1'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: TickTickPatch-release-1.1
+          path: release-apk
+      - name: Publish version 1.1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-apk/TickTickPatch-1.1.apk \
+            --verify-tag --title 'TickTickPatch 1.1' --notes-file xposed/RELEASE_NOTES.md

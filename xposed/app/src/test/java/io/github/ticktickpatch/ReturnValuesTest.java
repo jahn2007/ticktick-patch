@@ -21,7 +21,6 @@ public class ReturnValuesTest {
         }
         for (Class<?> type : new Class<?>[]{long.class, Long.class}) {
             assertEquals(Long.valueOf(ReturnValues.PRO_END_MS), ReturnValues.forType(END_TIME, type).create());
-            assertEquals(Long.valueOf(10611728865536L), ReturnValues.forType(SAMPLE_END_TIME, type).create());
         }
     }
 
@@ -52,7 +51,6 @@ public class ReturnValuesTest {
         assertThrows(IllegalArgumentException.class, () -> ReturnValues.forType(PRO_TYPE, long.class));
         assertThrows(IllegalArgumentException.class, () -> ReturnValues.forType(ZERO, boolean.class));
         assertThrows(IllegalArgumentException.class, () -> ReturnValues.forType(END_TIME, int.class));
-        assertThrows(IllegalArgumentException.class, () -> ReturnValues.forType(SAMPLE_END_TIME, int.class));
         assertThrows(IllegalArgumentException.class, () -> ReturnValues.forType(END_DATE, Object.class));
         assertThrows(IllegalArgumentException.class, () -> ReturnValues.forType(NULL, void.class));
         assertThrows(IllegalArgumentException.class, () -> ReturnValues.forType(NULL, boolean.class));

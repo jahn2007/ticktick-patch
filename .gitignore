@@ -9,3 +9,4 @@
 **/diagnostic-apks/
 xposed/analysis/
 **/__pycache__/
+.signing-private/
