@@ -8,6 +8,7 @@ final class HookProfile {
 
     HookProfile(String name) {
         if (!name.equals("none") && !name.equals("pass-through") && !name.equals("pro")
+                && !name.equals("pro-network") && !name.equals("pro-local")
                 && !name.equals("no-team") && !name.equals("full")) {
             throw new IllegalArgumentException("Unknown patch profile: " + name);
         }
@@ -22,13 +23,21 @@ final class HookProfile {
 
     boolean includesValue(String methodName) {
         if (!installsHooks()) return false;
-        if (name.equals("pro")) {
+        if (name.equals("pro") || name.equals("pro-network") || name.equals("pro-local")) {
             return methodName.equals("isPro") || methodName.equals("getIsPro")
                     || methodName.equals("getIsProN") || methodName.equals("getPro");
         }
         if (name.equals("no-team")) {
             return !methodName.toLowerCase(Locale.ROOT).contains("team");
         }
+        return true;
+    }
+
+    boolean includesValue(String className, String methodName) {
+        if (!includesValue(methodName)) return false;
+        boolean networkModel = className.startsWith("com.ticktick.task.network.sync.");
+        if (name.equals("pro-network")) return networkModel;
+        if (name.equals("pro-local")) return !networkModel;
         return true;
     }
 }

@@ -4,7 +4,7 @@ plugins {
 
 def releaseStore = providers.environmentVariable('SIGNING_STORE_FILE').orNull
 def patchProfile = providers.gradleProperty('patchProfile').getOrElse('full')
-if (!(patchProfile in ['none', 'pass-through', 'pro', 'no-team', 'full'])) {
+if (!(patchProfile in ['none', 'pass-through', 'pro', 'pro-network', 'pro-local', 'no-team', 'full'])) {
     throw new GradleException("Unknown patchProfile: ${patchProfile}")
 }
 

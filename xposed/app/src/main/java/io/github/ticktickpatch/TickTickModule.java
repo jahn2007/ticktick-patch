@@ -100,7 +100,7 @@ public final class TickTickModule extends XposedModule {
         void values(Class<?> type, ReturnValues.Kind kind, String... names) {
             if (type == null) return;
             for (String name : names) {
-                if (!profile.includesValue(name)) continue;
+                if (!profile.includesValue(type.getName(), name)) continue;
                 try {
                     // Only zero-argument getters are targeted, never arbitrary overloads.
                     Method method = noArgs(type, name);
