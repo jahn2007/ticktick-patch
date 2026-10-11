@@ -53,3 +53,7 @@ Debug 版本保留会员方法清单审计，以及每个 `Database.updateUser` 
 参考脚本标注针对 TickTick 8.2.2.0；本模块尚未在真机上验证。CI 成功代表测试、静态检查、编译和签名验证通过，不代表宿主运行时 Hook 已验证。模块修改客户端方法返回值，服务器端权限及接口限制仍由服务端决定。
 
 接口依据：[libxposed API 102.0.0](https://central.sonatype.com/artifact/io.github.libxposed/api/102.0.0)、[现代 Xposed 模块入口说明](https://github.com/LSPosed/LSPosed/wiki/Develop-Xposed-Modules-Using-Modern-Xposed-API)。实现以 Maven 发布的 102.0.0 源码签名为准。
+
+## APK 样例核对
+
+正常工作的 8001 修改版与生成脚本并非等价，已直接检查其会员 getter 和提醒处理器。证据与新增 `pro-reminder-gate`、`apk-sample` 候选的边界见 [APK 样例分析](APK_SAMPLE_ANALYSIS.md)。默认 `full` 仍是旧脚本配置；候选需另选诊断包进行真机验证。

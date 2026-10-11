@@ -7,3 +7,5 @@
 *.jks
 *.keystore
 **/diagnostic-apks/
+xposed/analysis/
+**/__pycache__/

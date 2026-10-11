@@ -38,6 +38,13 @@ public final class TickTickModule extends XposedModule {
         Installer(ClassLoader loader) { this.loader = loader; }
 
         void install() {
+            if (profile.includesReminderGate()) reminderGate();
+            if (profile.usesSamplePatch()) {
+                for (SamplePatch.Target target : SamplePatch.TARGETS) {
+                    values(find(target.owner), target.kind, target.method);
+                }
+                return;
+            }
             Class<?> entity = find("com.ticktick.task.network.sync.entity.SignUserInfo");
             values(entity, TRUE, "getIsProN", "getActiveTeamUserN", "getTeamUserN", "getTeamPro");
             values(entity, FALSE, "getIsInGracePeriodN", "getNeedSubscribe");
@@ -110,7 +117,14 @@ public final class TickTickModule extends XposedModule {
                     AtomicBoolean warned = new AtomicBoolean();
                     CallTrace trace = new CallTrace(method);
                     hook(method).setId("ticktickpatch.value").intercept(chain -> {
+                        // Check before proceeding so nested getters see the same reminder stack.
+                        boolean preserveReminder = profile.preservesReminderCalls()
+                                && ReminderCallPolicy.isReminder(Thread.currentThread().getStackTrace());
                         Object original = trace.proceed(chain);
+                        if (preserveReminder) {
+                            trace.reminderOriginal(original);
+                            return original;
+                        }
                         if (!profile.changesResults()) {
                             trace.result(original, original);
                             return original;
@@ -165,6 +179,30 @@ public final class TickTickModule extends XposedModule {
             }
         }
 
+        void reminderGate() {
+            // 8220 name from device stacks; 8001 name from the supplied APK bytecode.
+            // Other versions require new evidence rather than hooking arbitrary h() methods.
+            for (String name : new String[]{"jd.d", "qc.e"}) {
+                Class<?> type = find(name);
+                if (type == null) continue;
+                try {
+                    Method method = ReminderGate.resolve(type);
+                    CallTrace trace = new CallTrace(method);
+                    hook(method).setId("ticktickpatch.reminder-gate").intercept(chain -> {
+                        Object original = trace.proceed(chain);
+                        // In the sample, getProType() is always 1, so the early probe
+                        // always reaches its patched false-return block, even in local mode.
+                        trace.result(original, false);
+                        return false;
+                    });
+                    return;
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+                    skip(name + ".h (reminder gate)", e);
+                }
+            }
+            log(Log.WARN, TAG, "[reminder-gate-unavailable] No verified handler shape; reminder fix not installed");
+        }
+
         void observeDatabase(Class<?> type) {
             if (type == null) return;
             try {
@@ -211,6 +249,7 @@ public final class TickTickModule extends XposedModule {
         private final Method method;
         private final AtomicBoolean printedCall = new AtomicBoolean();
         private final AtomicBoolean printedError = new AtomicBoolean();
+        private final AtomicBoolean printedReminder = new AtomicBoolean();
 
         CallTrace(Method method) { this.method = method; }
 
@@ -232,6 +271,13 @@ public final class TickTickModule extends XposedModule {
             log(Log.INFO, TAG, "[hook-call] profile=" + BuildConfig.PATCH_PROFILE
                     + " method=" + method + " original=" + describe(original)
                     + " replacement=" + describe(replacement), new Throwable("First call path"));
+        }
+
+        void reminderOriginal(Object original) {
+            if (!printedReminder.compareAndSet(false, true)) return;
+            log(Log.INFO, TAG, "[reminder-original] profile=" + BuildConfig.PATCH_PROFILE
+                    + " method=" + method + " original=" + describe(original),
+                    new Throwable("Preserved reminder call path"));
         }
     }
 

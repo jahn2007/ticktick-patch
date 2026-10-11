@@ -74,6 +74,50 @@ public class HookProfileTest {
     }
 
     @Test
+    public void reminderSafeProfileKeepsNetworkResultsAndGuardsLocalProCalls() {
+        HookProfile profile = new HookProfile("pro-reminder-safe");
+        assertTrue(profile.preservesReminderCalls());
+        assertTrue(profile.includesValue("com.ticktick.task.data.User", "isPro"));
+        assertFalse(profile.includesValue("com.ticktick.task.network.sync.common.model.SignUserInfo", "isPro"));
+        assertFalse(profile.includesValue("com.ticktick.task.network.sync.entity.SignUserInfo", "getIsProN"));
+        assertFalse(profile.includesValue("com.ticktick.task.data.User", "getProType"));
+        assertFalse(profile.includesLimits());
+        assertFalse(profile.includesLegacyDiagnostics());
+        assertFalse(new HookProfile("pro-local").preservesReminderCalls());
+        assertFalse(new HookProfile("full").preservesReminderCalls());
+    }
+
+    @Test
+    public void singleProfilesSelectExactlyOneCandidateAndNoOtherReplacements() {
+        String[][] candidates = {
+                {"pro-n1", "com.ticktick.task.network.sync.entity.SignUserInfo", "getIsProN"},
+                {"pro-n2", "com.ticktick.task.network.sync.common.model.SignUserInfo", "isPro"},
+                {"pro-n3", "com.ticktick.task.network.sync.model.User7ProModel", "isPro"},
+                {"pro-n4", "com.ticktick.task.network.sync.payment.model.SubscriptionInfo", "getIsPro"},
+                {"pro-l1", "com.ticktick.task.data.User", "isPro"},
+                {"pro-l2", "com.ticktick.task.helper.pro.ProHelper", "isPro"},
+                {"pro-l3", "com.ticktick.kernel.account.impl.AccountManager", "isPro"},
+                {"pro-l4", "com.ticktick.task.javascript.CommonJavascriptObject$UserProfile", "getPro"}
+        };
+        for (String[] target : candidates) {
+            HookProfile profile = new HookProfile(target[0]);
+            assertTrue(profile.installsHooks());
+            assertTrue(profile.changesResults());
+            assertTrue(profile.tracesCalls());
+            for (String[] candidate : candidates) {
+                assertEquals("Selected class and method: " + target[0] + " / " + candidate[1],
+                        target == candidate, profile.includesValue(candidate[1], candidate[2]));
+                assertFalse(profile.includesValue(candidate[1], "getProEndDate"));
+                assertFalse(profile.includesValue(candidate[1], "getTeamPro"));
+            }
+            assertFalse(profile.includesLimits());
+            assertFalse(profile.includesLegacyDiagnostics());
+        }
+        assertThrows(IllegalArgumentException.class, () -> new HookProfile("pro-n5"));
+        assertThrows(IllegalArgumentException.class, () -> new HookProfile("pro-l0"));
+    }
+
+    @Test
     public void noTeamProfilePreservesTeamFieldsAcrossNamingStyles() {
         HookProfile profile = new HookProfile("no-team");
         for (String method : new String[]{"getTeamPro", "getTeamProEndDate", "isActiveTeamUser",
