@@ -70,6 +70,25 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Build reminder diagnostic APKs with the same debug signing key
+        run: |
+          mkdir -p diagnostic-apks
+          cp app/build/outputs/apk/debug/app-debug.apk diagnostic-apks/TickTickPatch-full.apk
+          for profile in none pass-through pro no-team; do
+            gradle --no-daemon --stacktrace -PpatchProfile="$profile" :app:assembleDebug
+            python3 scripts/verify_apk.py app/build/outputs/apk/debug/app-debug.apk
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify app/build/outputs/apk/debug/app-debug.apk
+            cp app/build/outputs/apk/debug/app-debug.apk "diagnostic-apks/TickTickPatch-$profile.apk"
+          done
+
+      - name: Upload reminder diagnostic APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: TickTickPatch-reminder-diagnostics-${{ github.run_number }}
+          path: xposed/diagnostic-apks/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
       # A personal signing key is optional. Forks and PRs still build debug APKs without secrets.
       - name: Prepare optional release signing
         id: signing

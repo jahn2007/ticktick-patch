@@ -44,6 +44,8 @@ Debug 版本保留会员方法清单审计，以及每个 `Database.updateUser` 
 
 ## 验证与排查
 
+若启用模块后提醒失效，使用同一轮 CI 的 `TickTickPatch-reminder-diagnostics-运行编号` 进行分组对照，见 [提醒失效排查](REMINDER_DIAGNOSTICS.md)。
+
 模块不显示注入完成的 Toast、通知或弹窗，也不输出加载成功及安装完成的汇总消息；参考脚本末尾的完成提示已一并移除。故障与调试日志仍使用 `TickTickPatch` 标签。多个版本的候选模型不会全部同时存在，部分跳过属正常现象；功能未生效时应检查作用域、框架版本及宿主类名是否变化。
 
 应用图标使用 `app/src/main/res/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher.png`，尺寸依次为 48、72、96、144、192 像素，由提供的 `asset/icon.png` 等比缩小并迁移而来；Manifest 通过 `android:icon="@mipmap/ic_launcher"` 引用。无需把图标放入 Xposed 的 `META-INF/xposed` 注册目录。
