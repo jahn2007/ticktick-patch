@@ -1,9 +1,14 @@
-# 正式版提醒排查
+# 2.0 故障排查
 
-1. 确认安装版本为 1.1、模块作用域正确，并重启 TickTick 进程。
-2. 新建普通任务，设置几分钟后的提醒，回到桌面等待；创建后不要强制停止应用。
-3. 如果没有通知，收集 LSPosed 和提醒到期前后的 Android 系统日志，注明 Android、TickTick 与框架版本。
+1. 确认模块版本为 2.0，作用域包含实际 TickTick 包名；从 1.1 升级后先重启宿主。
+2. 检查 LSPosed 日志中的 TickTickPatch 标签。`Account hook unavailable`、`Cannot identify current account` 表示账号入口、字段或实例识别失败；此时模块可能保留原账号状态，不应视为功能正常。
+3. `Skipped User.` 表示某个目标 getter 缺失或返回类型不匹配。旧额度与提醒处理器缺失时保留宿主行为，不再输出旧版的 `[reminder-gate-unavailable]`。
+4. 启动正常后，新建普通任务，设置几分钟后的提醒，回到桌面等待；创建后不要强制停止应用。
+5. 分别测试账号切换、退出登录及重新登录。热重载后若未生效，记录框架版本并重启宿主复测。
+6. 无提示退出不一定是未处理异常：应同时收集任务栈移除和 Activity 生命周期信息。没有 FATAL EXCEPTION 不能单独证明原因。
 
-正式版保留 TickTickPatch 标签的缺类、方法跳过及替换失败日志。`[reminder-gate-unavailable]` 表示提醒处理器未匹配，需要核对当前版本的类名和方法。
+提交问题时注明 Android、TickTick 版本号、框架版本、模块版本，以及冷启动或热重载后的复现方式。不要公开完整账号资料或任务内容。
 
-若已有 ADB，执行 `adb logcat -v threadtime > reminder.log`，结束后按 Ctrl+C。首次采集不要只过滤主进程 PID，以免漏掉提醒服务。无需安装本地环境或生成多个诊断版本。
+若已有 ADB，可执行 `adb logcat -v threadtime > ticktickpatch-2.0.log`，结束后按 Ctrl+C。首次采集不要只过滤主进程 PID，以免漏掉提醒服务。
+
+没有真机确认前，不应因日志安静就认为全部功能正常。不要为了排查直接清除应用数据，先备份或同步未上传的任务。

@@ -1,34 +1,36 @@
 # TickTick Patch 2.0
 
-2.0 使用 libxposed API 102，修复全局 User.isPro 返回 true 导致空白哨兵对象异常的问题。账号入口运行期解析，不硬编码 q5a/d，也不做宿主版本号白名单。
+应用包名 `io.github.ticktickpatch`，版本名 `2.0`，版本代码 `4`，使用 libxposed API `102.0.0`。只有一个正式实现，不提供多版本选择或诊断 APK 集合。
 
-只对从当前账号管理器获取、身份已初始化的同一个 User 对象替换会员判断、类型、到期时间和订阅提示；不修改对象字段、网络响应模型、数据库模型或团队字段。账号更新期间暂停替换并刷新实例。入口缺失或不唯一时保留宿主原行为并记录错误。旧版额度与提醒处理器仅在原符号存在且形状匹配时兼容。
+## 下载与安装
 
-已启用 autoHotReload，旧代同意热重载后，新代会清理旧 Hook、恢复宿主 ClassLoader 并重新识别账号。实际是否支持热重载取决于框架；从未支持热重载的 1.1 首次升级时需要重启宿主。模块不显示注入完成提示。
+在 [v2.0 Release](https://github.com/jahn2007/ticktick-patch/releases/tag/v2.0) 下载 `TickTickPatch-2.0.apk`，安装后在支持 API 102 的框架中启用，勾选 TickTick / 滴答清单。
 
-当前没有新版 APK / 真机验证，不能将单元测试与编译成功视为新版宿主的功能验证。读取路径替换不直接写字段，但尚未证明所有宿主序列化路径都不会读取替换值。
+从不支持热重载的 1.1 首次升级后，需要重启 TickTick。固定 Release 签名与旧 Debug 签名不同时，先卸载旧模块再安装，保留 TickTick 及其数据。模块无桌面入口，不显示注入完成提示。
 
-构建：配置原有四项签名 Secrets，推送 v2.0 标签；CI 通过 Release 单元测试、Lint、模块元数据和签名检查后，发布 TickTickPatch-2.0.apk。无需本地 JDK / SDK / Gradle。
+## 2.0 的行为
 
-以下为 1.1 历史说明，2.0 行为以本节及源码为准。
+- 运行期通过 `TickTickApplicationBase.getAccountManager()` 获取实际账号管理器，不硬编码混淆类名。
+- 在账号管理器中解析唯一的无参、返回 `data.User` 的实例方法，记录其返回的当前用户对象；身份未初始化或候选不唯一时不启用替换。
+- 同时检查对象身份：只有捕获到的同一个当前用户实例才能获得替换值，不能仅靠账号 ID 非空判断。空白 `new User()` 和其他用户对象保留原值。
+- 对该实例替换会员判断、订阅提示、会员类型和到期时间；`getProType()` 返回 1、`getProTypeForFake()` 返回 0、`getProEndTime()` 返回 `253382774400000L`。保留 `getNoGraceDate()` 原值。
+- 账号管理器其他实例方法执行期间暂停替换并刷新当前用户，使用操作计数与代次防止旧账号调用覆盖新身份。
+- 不修改宿主用户字段，不 Hook 网络响应或数据库用户模型，也不改团队状态。
+- 旧额度方法和旧提醒处理器只在符号存在且方法形状符合时兼容；新版缺失的符号不会被当作已经适配。
 
-使用 libxposed API 102 的纯 Java 模块。正式版固定采用用户已验证正常的最终合并方案，不再提供多版本选择或诊断 APK 集合。应用包名 `io.github.ticktickpatch`，版本名 `1.1`，版本代码 `3`。
+入口或字段变化时，模块保留原行为并记录必要错误。读取路径替换不直接写字段，但尚未证明所有宿主保存、序列化路径都不会读取替换值，不能承诺完全没有间接持久化影响。
 
-## 正式版行为
+## 热重载
 
-- 34 个非团队返回值 Hook，不修改团队身份、团队会员或团队日期。
-- `User.getProType()` 为 `1`，`User.getProTypeForFake()` 为 `0`。
-- 用户和数据库模型的到期时间均为 `253382774400000L`；其他非团队日期沿用远期日期。
-- 免费额度读取会员额度对象。
-- 校验提醒处理器 `jd.d` / `qc.e` 的方法形状后，令第一个匹配的 `h()` 返回 `false`。
+`module.prop` 声明 `autoHotReload=true`。旧代在 `onHotReloading()` 同意重载并传递宿主 ClassLoader，新代在 `onHotReloaded()` 清理旧 Hook、重建新 Hook、重新识别账号，不依赖框架重放启动回调。
 
-Hook 行为与最终 `merged-no-team` 测试版相同，用户已在 Android 15、TickTick Play 8.2.2.0（8220）、LSPosed 2.2.1（7912）/ API 102 上确认正常工作。宿主升级后需重新验证。
+实际支持取决于框架，声明 API 102 不代表任何框架都能热重载。从 1.1 首次升级需冷启动；之后更新若框架不支持或重载未生效，也应重启宿主进程。设备上的热重载及新版宿主兼容性仍需确认。
 
-原方法成功返回后才替换结果，保留原副作用和异常；日期或额度构造失败时保留原结果。缺类、缺方法或类型不匹配会跳过并记录日志。没有首次调用栈、数据库观察、方法审计或注入完成 Toast、通知、弹窗。模块无桌面入口。
+## 构建与发布
 
-## GitHub 构建与发布
+CI 已通过 Release 单元测试、Lint、打包检查和签名验证，正式 APK 已发布。这些检查不等同于新版 TickTick 的真机启动、提醒及会员功能验证。
 
-工作流 `.github/workflows/build-xposed.yml` 在 xposed 分支修改、PR 和手动运行时执行 Release 单元测试、Lint 及打包检查。非 PR 构建必须配置四项 Repository Secrets：
+根目录 `.github/workflows/build-xposed.yml` 在 xposed 分支相关变更、PR 或手动运行时构建。非 PR 使用四项 Repository Secrets：
 
 | Secret | 内容 |
 | --- | --- |
@@ -37,12 +39,12 @@ Hook 行为与最终 `merged-no-team` 测试版相同，用户已在 Android 15�
 | `KEY_ALIAS` | 私钥别名 |
 | `KEY_PASSWORD` | 私钥密码 |
 
-普通构建上传 `TickTickPatch-release-1.1`，内含 `TickTickPatch-1.1.apk`。推送 v1.1 标签后，测试、模块元数据与签名检查全部通过才自动创建 GitHub Release 并附上 APK。PR 不使用 Secrets、不发布产物，只检查未签名 Release 的打包。
+构建产物为 `TickTickPatch-release-2.0`，内含 `TickTickPatch-2.0.apk`。推送 v2.0 标签时，检查通过后才创建 GitHub Release；该正式标签已发布，不应为修改文档移动标签。PR 不使用 Secrets、不发布 APK，只检查未签名 Release 打包。
 
-CI 使用 JDK 17、Gradle 9.3.1、Android SDK 37.0、Build Tools 36.0.0，无需安装本地环境。私钥只临时存在 Runner 上，结束时删除，不随产物上传。
+CI 使用 JDK 17、Gradle 9.3.1、Android SDK 37.0 和 Build Tools 36.0.0，无需本地安装环境。私钥临时解码到 Runner，构建结束后删除。
 
-安装后在 API 102 框架中启用模块，勾选 TickTick / 滴答清单并重启宿主进程。旧 Debug 签名不同时，先卸载旧模块再安装，保留 TickTick 及其数据。
+`.github/workflows/sync-release-notes.yml` 在发布说明变更时同步已有 v2.0 Release 的正文，不更换签名 APK 或移动发布标签。
 
-作用域为 `com.ticktick.task` / `cn.ticktick.task`，目标类沿用 `com.ticktick.*`；已验证的是上述 Play 版本。服务器权限仍由服务端控制。
+作用域为 `com.ticktick.task` / `cn.ticktick.task`。2.0 不设宿主版本白名单，这不代表所有版本均兼容，服务器权限仍由服务端控制。
 
-历史字节码证据见 [APK_SAMPLE_ANALYSIS.md](APK_SAMPLE_ANALYSIS.md)，正式版排查见 [REMINDER_DIAGNOSTICS.md](REMINDER_DIAGNOSTICS.md)。
+历史样例分析见 [APK_SAMPLE_ANALYSIS.md](APK_SAMPLE_ANALYSIS.md)，只用于解释旧版本证据；当前故障排查见 [REMINDER_DIAGNOSTICS.md](REMINDER_DIAGNOSTICS.md)。

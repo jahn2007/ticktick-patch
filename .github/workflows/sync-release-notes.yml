@@ -1,0 +1,27 @@
+name: Sync release documentation
+
+on:
+  push:
+    branches: ['xposed']
+    paths:
+      - 'xposed/RELEASE_NOTES.md'
+      - '.github/workflows/sync-release-notes.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-notes-v2.0
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update existing release description
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit v2.0 --notes-file xposed/RELEASE_NOTES.md
