@@ -10,5 +10,6 @@ final class CurrentUserGuard {
 
     void clear() { current = null; }
     boolean hasCurrent() { return current != null; }
+    Object currentUser() { return current; }
     boolean matches(Object receiver) { return receiver != null && receiver == current; }
 }

@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-notes-v2.0
+  group: release-notes-v2.0.1
   cancel-in-progress: true
 
 jobs:
@@ -24,4 +24,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release edit v2.0 --notes-file xposed/RELEASE_NOTES.md
+        run: |
+          if gh release view v2.0.1 >/dev/null 2>&1; then
+            gh release edit v2.0.1 --notes-file xposed/RELEASE_NOTES.md
+          else
+            echo 'Release not published yet; the publish job will attach these notes.'
+          fi

@@ -52,6 +52,7 @@ public final class TickTickModule extends XposedModule {
         final AtomicLong epoch = new AtomicLong();
         Class<?> userType;
         Field id;
+        Method localMode;
         volatile Object manager;
 
         Installer(ClassLoader loader) { this.loader = loader; }
@@ -59,6 +60,12 @@ public final class TickTickModule extends XposedModule {
         void install() throws ReflectiveOperationException {
             userType = Class.forName("com.ticktick.task.data.User", false, loader);
             id = field(userType, "_id");
+            localMode = noArgs(userType, "isLocalMode");
+            if (localMode.getReturnType() != boolean.class || Modifier.isStatic(localMode.getModifiers()))
+                throw new IllegalArgumentException("Unsupported local account predicate");
+            ReturnValues.forType(TRUE, noArgs(userType, "isPro").getReturnType()).create();
+            for (String name : new String[]{"getProType", "getProTypeForFake"})
+                ReturnValues.forType(PRO_TYPE, noArgs(userType, name).getReturnType()).create();
             Class<?> app = Class.forName("com.ticktick.task.TickTickApplicationBase", false, loader);
             Method account = noArgs(app, "getAccountManager");
             if (Modifier.isStatic(account.getModifiers())) throw new IllegalArgumentException("Static account accessor");
@@ -74,8 +81,7 @@ public final class TickTickModule extends XposedModule {
             });
             values(TRUE, "isPro");
             values(FALSE, "isNeedSubscribe", "getNeedSubscribe", "getGracePeriod", "isDuplicateSubscribeError");
-            values(PRO_TYPE, "getProType");
-            values(ZERO, "getProTypeForFake");
+            values(PRO_TYPE, "getProType", "getProTypeForFake");
             values(END_TIME, "getProEndTime");
             // Hot reload or late injection: initialize from the already-created application.
             try {
@@ -84,7 +90,6 @@ public final class TickTickModule extends XposedModule {
             } catch (ReflectiveOperationException | RuntimeException e) {
                 // On a cold start the account accessor hook initializes us later.
             }
-            reminderGate();
             limits();
         }
 
@@ -140,7 +145,7 @@ public final class TickTickModule extends XposedModule {
                     factory.create();
                     hook(method).setId("ticktickpatch.value").intercept(chain -> {
                         Object original = chain.proceed();
-                        if (storageDepth.get() != 0 || accountOperations.get() != 0 || !guard.matches(chain.getThisObject())) return original;
+                        if (!eligible(chain.getThisObject())) return original;
                         try { return factory.create(); }
                         catch (ReflectiveOperationException | RuntimeException e) { return original; }
                     });
@@ -150,18 +155,18 @@ public final class TickTickModule extends XposedModule {
             }
         }
 
-        void reminderGate() {
-            for (String name : new String[]{"jd.d", "qc.e"}) {
-                try {
-                    Method method = ReminderGate.resolve(Class.forName(name, false, loader));
-                    hook(method).setId("ticktickpatch.reminder-gate").intercept(chain -> {
-                        chain.proceed();
-                        return false;
-                    });
-                    return;
-                } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) { }
+        boolean eligible(Object receiver) {
+            if (storageDepth.get() != 0 || accountOperations.get() != 0 || !guard.matches(receiver)) return false;
+            int depth = storageDepth.get();
+            storageDepth.set(depth + 1);
+            try {
+                boolean local = Boolean.TRUE.equals(localMode.invoke(receiver));
+                return MembershipPolicy.shouldOverride(guard, receiver, local, accountOperations.get() != 0);
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                return false;
+            } finally {
+                if (depth == 0) storageDepth.remove(); else storageDepth.set(depth);
             }
-            // New handlers retain their own checks: blank-object probes are no longer modified.
         }
 
         void limits() {
@@ -172,7 +177,7 @@ public final class TickTickModule extends XposedModule {
                         || Modifier.isStatic(free.getModifiers()) != Modifier.isStatic(pro.getModifiers())) return;
                 hook(free).setId("ticktickpatch.limits").intercept(chain -> {
                     Object original = chain.proceed();
-                    if (!guard.hasCurrent() || storageDepth.get() != 0 || accountOperations.get() != 0) return original;
+                    if (!eligible(guard.currentUser())) return original;
                     try { Object result = pro.invoke(chain.getThisObject()); return result != null ? result : original; }
                     catch (ReflectiveOperationException | RuntimeException e) { return original; }
                 });
