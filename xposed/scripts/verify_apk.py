@@ -19,6 +19,7 @@ def verify(path):
         assert properties["minApiVersion"] == "102", properties
         assert properties["targetApiVersion"] == "102", properties
         assert properties["staticScope"] == "true", properties
+        assert properties["autoHotReload"] == "true", properties
         assert "AndroidManifest.xml" in apk.namelist()
         dex_files = [name for name in apk.namelist() if name.endswith(".dex")]
         assert dex_files, "APK has no DEX code"

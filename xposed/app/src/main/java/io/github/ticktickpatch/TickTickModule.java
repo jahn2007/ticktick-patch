@@ -1,185 +1,198 @@
 package io.github.ticktickpatch;
 
 import android.util.Log;
-
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
-
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import io.github.libxposed.api.XposedModule;
-
 import static io.github.ticktickpatch.ReturnValues.Kind.*;
 
-/** API 102 entry point. The framework supplies the host loader before Application creation. */
+/** API 102: account-scoped overrides; no host fields are changed. */
 public final class TickTickModule extends XposedModule {
     private static final String TAG = "TickTickPatch";
-    private final Set<ClassLoader> installed =
-            Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<ClassLoader> installed = Collections.newSetFromMap(new IdentityHashMap<>());
 
-    @Override
-    public synchronized void onPackageReady(PackageReadyParam param) {
-        String name = param.getPackageName();
-        if (!name.equals("com.ticktick.task") && !name.equals("cn.ticktick.task")) return;
-        if (!installed.add(param.getClassLoader())) return;
-        new Installer(param.getClassLoader()).install();
+    @Override public synchronized void onPackageReady(PackageReadyParam param) {
+        if (param.getPackageName().equals("com.ticktick.task") || param.getPackageName().equals("cn.ticktick.task"))
+            install(param.getClassLoader());
+    }
+
+    @Override public synchronized boolean onHotReloading(HotReloadingParam param) {
+        param.setSavedInstanceState(installed.toArray(new ClassLoader[0]));
+        return true;
+    }
+
+    @Override public synchronized void onHotReloaded(HotReloadedParam param) {
+        for (var handle : param.getOldHookHandles()) handle.unhook();
+        Object state = param.getSavedInstanceState();
+        if (state instanceof ClassLoader[]) {
+            for (ClassLoader loader : (ClassLoader[]) state) install(loader);
+        }
+    }
+
+    private void install(ClassLoader loader) {
+        if (!installed.add(loader)) return;
+        try { new Installer(loader).install(); }
+        catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            log(Log.ERROR, TAG, "Account hook unavailable; preserving host behavior", e);
+        }
     }
 
     private final class Installer {
-        private final ClassLoader loader;
+        final ClassLoader loader;
+        final CurrentUserGuard guard = new CurrentUserGuard();
+        final Set<Class<?>> managers = Collections.newSetFromMap(new IdentityHashMap<>());
+        final ThreadLocal<Integer> storageDepth = ThreadLocal.withInitial(() -> 0);
+        final AtomicInteger accountOperations = new AtomicInteger();
+        final AtomicLong epoch = new AtomicLong();
+        Class<?> userType;
+        Field id;
+        volatile Object manager;
 
         Installer(ClassLoader loader) { this.loader = loader; }
 
-        void install() {
-            reminderGate();
-            Class<?> entity = find("com.ticktick.task.network.sync.entity.SignUserInfo");
-            values(entity, TRUE, "getIsProN");
-            values(entity, FALSE, "getIsInGracePeriodN", "getNeedSubscribe");
-            values(entity, NULL, "getNoGraceDate");
-            values(entity, END_DATE, "getProEndDate");
-
-            Class<?> legacy = find("com.ticktick.task.network.sync.common.model.SignUserInfo");
-            values(legacy, TRUE, "isPro");
-            values(legacy, FALSE, "getNeedSubscribe", "getGracePeriod");
-            values(legacy, END_DATE, "getProEndDate");
-
-            Class<?> user7 = find("com.ticktick.task.network.sync.model.User7ProModel");
-            values(user7, TRUE, "isPro");
-            values(user7, FALSE, "isNeedSubscribe");
-            values(user7, END_DATE, "getProEndDate");
-
-            Class<?> subscription = find("com.ticktick.task.network.sync.payment.model.SubscriptionInfo");
-            values(subscription, TRUE, "getIsPro");
-            values(subscription, FALSE, "isNeedSubscribe");
-            values(subscription, END_DATE, "getProEndDate");
-
-            Class<?> user = find("com.ticktick.task.data.User");
-            values(user, TRUE, "isPro");
-            values(user, FALSE, "isNeedSubscribe", "getNeedSubscribe", "getGracePeriod", "isDuplicateSubscribeError");
-            values(user, PRO_TYPE, "getProType");
-            values(user, ZERO, "getProTypeForFake");
-            values(user, END_TIME, "getProEndTime");
-            values(user, NULL, "getNoGraceDate");
-
-            values(find("com.ticktick.task.helper.pro.ProHelper"), TRUE, "isPro");
-            values(find("com.ticktick.kernel.account.impl.AccountManager"), TRUE, "isPro");
-            limits(find("com.ticktick.task.helper.LimitHelper"));
-
-            Class<?> js = find("com.ticktick.task.javascript.CommonJavascriptObject$UserProfile");
-            values(js, TRUE, "getPro");
-            values(js, FALSE, "getNeedSubscribe", "getGracePeriod");
-            values(js, END_DATE, "getProEndDate");
-
-            Class<?> dbUser = find("com.ticktick.task.sync.db.User");
-            values(dbUser, PRO_TYPE, "getPRO_TYPE");
-            values(dbUser, END_TIME, "getPRO_END_TIME");
-            values(dbUser, FALSE, "getNEED_SUBSCRIBE", "getGRACE_PERIOD");
-
-        }
-
-        Class<?> find(String name) {
+        void install() throws ReflectiveOperationException {
+            userType = Class.forName("com.ticktick.task.data.User", false, loader);
+            id = field(userType, "_id");
+            Class<?> app = Class.forName("com.ticktick.task.TickTickApplicationBase", false, loader);
+            Method account = noArgs(app, "getAccountManager");
+            if (Modifier.isStatic(account.getModifiers())) throw new IllegalArgumentException("Static account accessor");
+            // Install before Application initialization, without invoking an uninitialized singleton.
+            hook(account).setId("ticktickpatch.account").intercept(chain -> {
+                Object result = chain.proceed();
+                try { attach(result); }
+                catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+                    log(Log.WARN, TAG, "Cannot identify current account", e);
+                    guard.clear();
+                }
+                return result;
+            });
+            values(TRUE, "isPro");
+            values(FALSE, "isNeedSubscribe", "getNeedSubscribe", "getGracePeriod", "isDuplicateSubscribeError");
+            values(PRO_TYPE, "getProType");
+            values(ZERO, "getProTypeForFake");
+            values(END_TIME, "getProEndTime");
+            // Hot reload or late injection: initialize from the already-created application.
             try {
-                return Class.forName(name, false, loader);
-            } catch (ClassNotFoundException | LinkageError e) {
-                log(Log.INFO, TAG, "Class unavailable: " + name);
-                return null;
+                Object instance = noArgs(app, "getInstance").invoke(null);
+                if (instance != null) account.invoke(instance);
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                // On a cold start the account accessor hook initializes us later.
             }
+            reminderGate();
+            limits();
         }
 
-        void values(Class<?> type, ReturnValues.Kind kind, String... names) {
-            if (type == null) return;
-            for (String name : names) {
-                try {
-                    // Only zero-argument getters are targeted, never arbitrary overloads.
-                    Method method = noArgs(type, name);
-                    ReturnValues.Factory factory = ReturnValues.forType(kind, method.getReturnType());
-                    // Reject unsupported date constructors before touching the host method.
-                    factory.create();
-                    AtomicBoolean warned = new AtomicBoolean();
-                    hook(method).setId("ticktickpatch.value").intercept(chain -> {
-                        Object original = chain.proceed();
-                        try {
-                            Object replacement = factory.create();
-                            return replacement;
-                        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
-                            if (warned.compareAndSet(false, true)) {
-                                log(Log.WARN, TAG, "Replacement failed: " + method, e);
-                            }
-                            return original;
+        synchronized void attach(Object value) throws ReflectiveOperationException {
+            if (value == null) { manager = null; guard.clear(); return; }
+            Method getter = AccountMethods.currentGetter(value.getClass(), userType);
+            if (manager != value) { epoch.incrementAndGet(); manager = value; guard.clear(); }
+            if (managers.add(value.getClass())) {
+                hook(getter).setId("ticktickpatch.current-user").intercept(chain -> {
+                    long generation = epoch.get();
+                    Object result = chain.proceed();
+                    if (chain.getThisObject() == manager && storageDepth.get() == 0
+                            && accountOperations.get() == 0 && generation == epoch.get()) observe(result);
+                    return result;
+                });
+                // Do not modify write arguments. Suppress overrides during account writes and
+                // invalidate cached identity before login/logout/account updates can occur.
+                for (Method method : value.getClass().getDeclaredMethods()) {
+                    if (method.equals(getter) || method.isSynthetic() || Modifier.isStatic(method.getModifiers())
+                            || Modifier.isAbstract(method.getModifiers()) || Modifier.isNative(method.getModifiers())) continue;
+                    hook(method).setId("ticktickpatch.account-context").intercept(chain -> {
+                        if (chain.getThisObject() != manager || storageDepth.get() != 0) return chain.proceed();
+                        epoch.incrementAndGet();
+                        accountOperations.incrementAndGet();
+                        guard.clear();
+                        int depth = storageDepth.get();
+                        storageDepth.set(depth + 1);
+                        try { return chain.proceed(); }
+                        finally {
+                            try { observe(getter.invoke(chain.getThisObject())); }
+                            catch (ReflectiveOperationException | RuntimeException e) { guard.clear(); }
+                            accountOperations.decrementAndGet();
+                            if (depth == 0) storageDepth.remove(); else storageDepth.set(depth);
                         }
                     });
-                } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
-                    skip(type.getName() + "." + name, e);
                 }
             }
+            observe(getter.invoke(value));
         }
 
-        void limits(Class<?> type) {
-            if (type == null) return;
+        void observe(Object user) {
             try {
-                Method free = noArgs(type, "getLimitsFree");
-                Method pro = noArgs(type, "getLimitsPro");
-                if (free.getReturnType().isPrimitive()
-                        || !free.getReturnType().isAssignableFrom(pro.getReturnType())
-                        || Modifier.isStatic(free.getModifiers()) != Modifier.isStatic(pro.getModifiers())) {
-                    throw new IllegalArgumentException("Incompatible limit getters");
+                Object key = user != null && userType.isInstance(user) ? id.get(user) : null;
+                guard.update(user, key);
+            } catch (IllegalAccessException | RuntimeException e) { guard.clear(); }
+        }
+
+        void values(ReturnValues.Kind kind, String... names) {
+            for (String name : names) {
+                try {
+                    Method method = noArgs(userType, name);
+                    ReturnValues.Factory factory = ReturnValues.forType(kind, method.getReturnType());
+                    factory.create();
+                    hook(method).setId("ticktickpatch.value").intercept(chain -> {
+                        Object original = chain.proceed();
+                        if (storageDepth.get() != 0 || accountOperations.get() != 0 || !guard.matches(chain.getThisObject())) return original;
+                        try { return factory.create(); }
+                        catch (ReflectiveOperationException | RuntimeException e) { return original; }
+                    });
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+                    log(Log.WARN, TAG, "Skipped User." + name, e);
                 }
-                AtomicBoolean warned = new AtomicBoolean();
-                hook(free).setId("ticktickpatch.limits").intercept(chain -> {
-                    Object original = chain.proceed();
-                    try {
-                        Object replacement = pro.invoke(chain.getThisObject());
-                        Object result = replacement != null ? replacement : original;
-                        return result;
-                    } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
-                        if (warned.compareAndSet(false, true)) log(Log.WARN, TAG, "Limits fallback", e);
-                        return original;
-                    }
-                });
-            } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
-                skip(type.getName() + ".getLimitsFree", e);
             }
         }
 
         void reminderGate() {
-            // 8220 name from device stacks; 8001 name from the supplied APK bytecode.
-            // Other versions require new evidence rather than hooking arbitrary h() methods.
             for (String name : new String[]{"jd.d", "qc.e"}) {
-                Class<?> type = find(name);
-                if (type == null) continue;
                 try {
-                    Method method = ReminderGate.resolve(type);
+                    Method method = ReminderGate.resolve(Class.forName(name, false, loader));
                     hook(method).setId("ticktickpatch.reminder-gate").intercept(chain -> {
                         chain.proceed();
-                        // In the sample, getProType() is always 1, so the early probe
-                        // always reaches its patched false-return block, even in local mode.
                         return false;
                     });
                     return;
-                } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
-                    skip(name + ".h (reminder gate)", e);
-                }
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) { }
             }
-            log(Log.WARN, TAG, "[reminder-gate-unavailable] No verified handler shape; reminder fix not installed");
+            // New handlers retain their own checks: blank-object probes are no longer modified.
         }
 
-        void skip(String name, Throwable error) {
-            log(Log.WARN, TAG, "Skipped " + name + ": " + error);
+        void limits() {
+            try {
+                Class<?> type = Class.forName("com.ticktick.task.helper.LimitHelper", false, loader);
+                Method free = noArgs(type, "getLimitsFree"), pro = noArgs(type, "getLimitsPro");
+                if (free.getReturnType().isPrimitive() || !free.getReturnType().isAssignableFrom(pro.getReturnType())
+                        || Modifier.isStatic(free.getModifiers()) != Modifier.isStatic(pro.getModifiers())) return;
+                hook(free).setId("ticktickpatch.limits").intercept(chain -> {
+                    Object original = chain.proceed();
+                    if (!guard.hasCurrent() || storageDepth.get() != 0 || accountOperations.get() != 0) return original;
+                    try { Object result = pro.invoke(chain.getThisObject()); return result != null ? result : original; }
+                    catch (ReflectiveOperationException | RuntimeException e) { return original; }
+                });
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) { }
         }
+    }
+
+    private static Field field(Class<?> type, String name) throws NoSuchFieldException {
+        for (Class<?> c = type; c != null; c = c.getSuperclass()) {
+            try { Field f = c.getDeclaredField(name); f.setAccessible(true); return f; }
+            catch (NoSuchFieldException ignored) { }
+        }
+        throw new NoSuchFieldException(name);
     }
 
     private static Method noArgs(Class<?> type, String name) throws NoSuchMethodException {
-        for (Class<?> current = type; current != null && current != Object.class; current = current.getSuperclass()) {
-            try {
-                Method method = current.getDeclaredMethod(name);
-                if (Modifier.isAbstract(method.getModifiers())) throw new IllegalArgumentException("Abstract getter");
-                method.setAccessible(true);
-                return method;
-            } catch (NoSuchMethodException ignored) { /* Search inherited model getters. */ }
+        for (Class<?> c = type; c != null; c = c.getSuperclass()) {
+            try { Method m = c.getDeclaredMethod(name); m.setAccessible(true); return m; }
+            catch (NoSuchMethodException ignored) { }
         }
-        throw new NoSuchMethodException(type.getName() + "." + name + "()");
+        throw new NoSuchMethodException(name);
     }
-
 }
